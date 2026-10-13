@@ -1,0 +1,43 @@
+{
+  "type": "object",
+  "description": "One Slack app per agent. Create the app at api.slack.com/apps with Socket Mode enabled, install it to your workspace, and paste its two tokens here.",
+  "required": ["appToken", "botToken"],
+  "properties": {
+    "appToken": {
+      "type": "string",
+      "format": "password",
+      "title": "App-level token (xapp-...)",
+      "description": "Basic Information → App-Level Tokens → generate a token with the connections:write scope. Stored encrypted; never shown again."
+    },
+    "botToken": {
+      "type": "string",
+      "format": "password",
+      "title": "Bot token (xoxb-...)",
+      "description": "OAuth & Permissions → Bot User OAuth Token, available once the app is installed to the workspace. Stored encrypted; never shown again."
+    },
+    "threadReplies": {
+      "type": "boolean",
+      "title": "Always reply in a thread",
+      "description": "Answer a top-level message in a thread on that message; each thread is its own conversation. Off: answer in the channel or DM itself, one conversation per channel.",
+      "default": true
+    },
+    "respondDM": {
+      "type": "boolean",
+      "title": "Answer direct messages",
+      "description": "Answer every message sent to the bot in a direct message.",
+      "default": true
+    },
+    "respondMention": {
+      "type": "boolean",
+      "title": "Answer @mentions in channels",
+      "description": "Answer when someone @mentions the bot in a channel it is a member of.",
+      "default": true
+    },
+    "respondThread": {
+      "type": "boolean",
+      "title": "Keep answering in threads",
+      "description": "Once the bot has answered in a thread, answer follow-ups there without a mention, unless the message mentions someone else.",
+      "default": true
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "slack",
+  "name": "Slack",
+  "version": "0.1.0",
+  "description": "Connect a kojo agent to Slack: it answers DMs, mentions and threads over Socket Mode, and can post on its own.",
+  "kojoVersion": ">0.135.0",
+  "scopes": ["chat:session"],
+  "contributes": {
+    "service": {
+      "scope": "per-agent",
+      "exec": {
+        "darwin/arm64": "bin/darwin-arm64/kojo-ext-slack",
+        "darwin/amd64": "bin/darwin-amd64/kojo-ext-slack",
+        "linux/amd64": "bin/linux-amd64/kojo-ext-slack",
+        "linux/arm64": "bin/linux-arm64/kojo-ext-slack",
+        "windows/amd64": "bin/windows-amd64/kojo-ext-slack.exe"
+      }
+    },
+    "mcpServers": [
+      {
+        "name": "slack",
+        "exec": {
+          "darwin/arm64": "bin/darwin-arm64/kojo-ext-slack",
+          "darwin/amd64": "bin/darwin-amd64/kojo-ext-slack",
+          "linux/amd64": "bin/linux-amd64/kojo-ext-slack",
+          "linux/arm64": "bin/linux-arm64/kojo-ext-slack",
+          "windows/amd64": "bin/windows-amd64/kojo-ext-slack.exe"
+        },
+        "args": ["mcp"]
+      }
+    ],
+    "settings": {
+      "scope": "per-agent",
+      "schema": "settings.schema.json"
+    }
+  }
+}

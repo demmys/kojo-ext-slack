@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 
@@ -108,7 +109,12 @@ func slackAPIOptions(log *slog.Logger) []slack.Option {
 		// slack-go appends the method name to the URL as it stands.
 		u += "/"
 	}
-	log.Warn("using a Slack API address override; this is for testing only", "env", envSlackAPIURL, "url", u)
+	// Not the URL itself: it may carry credentials.
+	host := "unparseable"
+	if p, err := url.Parse(u); err == nil {
+		host = p.Host
+	}
+	log.Warn("using a Slack API address override; this is for testing only", "env", envSlackAPIURL, "host", host)
 	return []slack.Option{slack.OptionAPIURL(u)}
 }
 

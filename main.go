@@ -79,13 +79,14 @@ func runService(ctx context.Context, env Env, log *slog.Logger) error {
 		<-ctx.Done()
 		return nil
 	}
-	if !waitForSlack(ctx, appToken, botToken, log) {
+	slackOpts := slackAPIOptions(log)
+	if !waitForSlack(ctx, appToken, botToken, log, slackOpts...) {
 		<-ctx.Done()
 		return nil
 	}
 
 	client := kojoclient.New(env.APIBase, env.Token, env.AgentID, log)
-	bot := slackbot.NewBot(ctx, env.AgentID, env.DataDir, env.Config, appToken, botToken, client, log)
+	bot := slackbot.NewBot(ctx, env.AgentID, env.DataDir, env.Config, appToken, botToken, client, log, slackOpts...)
 	bot.Run()
 	if ctx.Err() == nil {
 		// Returning an error has kojo restart the service.
@@ -99,10 +100,10 @@ func runService(ctx context.Context, env Env, log *slog.Logger) error {
 // was refused or ctx ended. A Slack that cannot be reached is retried
 // here: exiting instead would only move the retry loop into kojo's
 // supervisor, with its restart limits.
-func waitForSlack(ctx context.Context, appToken, botToken string, log *slog.Logger) bool {
+func waitForSlack(ctx context.Context, appToken, botToken string, log *slog.Logger, slackOpts ...slack.Option) bool {
 	for delay := time.Second; ; delay = min(delay*2, time.Minute) {
 		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		team, user, err := slackbot.TestConnection(checkCtx, appToken, botToken)
+		team, user, err := slackbot.TestConnection(checkCtx, appToken, botToken, slackOpts...)
 		cancel()
 		if err == nil {
 			log.Info("Slack accepted the bot token", "team", team, "botUser", user)
@@ -145,8 +146,9 @@ func runMCPMode(ctx context.Context, env Env, log *slog.Logger) error {
 	}
 	client := kojoclient.New(env.APIBase, env.Token, env.AgentID, log)
 	return runMCP(ctx, os.Stdin, os.Stdout, log, version, mcpOptions{
-		BotToken:  func(ctx context.Context) (string, error) { return fetchBotToken(ctx, client) },
-		UploadDir: env.UploadDir,
+		BotToken:     func(ctx context.Context) (string, error) { return fetchBotToken(ctx, client) },
+		UploadDir:    env.UploadDir,
+		SlackOptions: slackAPIOptions(log),
 	})
 }
 

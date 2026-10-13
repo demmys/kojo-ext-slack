@@ -242,6 +242,10 @@ The same binary plays two roles: with no arguments it is the service that stays 
 | `internal/chathistory` | the per-thread history files |
 | `internal/agent`, `internal/uploadpath` | the types and paths shared with kojo |
 
+### Testing against a fake Slack
+
+For tests only, the environment variable `EXT_SLACK_API_URL` replaces the address of Slack's Web API (for example `http://127.0.0.1:9000/api/`). Both the service and the MCP server read it once at startup, and the Socket Mode address comes from whatever that server answers to `apps.connections.open`. kojo starts the package with a fixed set of variables, so the way to set it is the `env` map of `contributes.service` and of the MCP server in a test copy of `kojo-package.json`. Leave it unset in normal use: with it set, the tokens are sent to that address instead of Slack.
+
 ## License
 
 MIT

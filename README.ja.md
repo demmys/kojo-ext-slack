@@ -242,6 +242,10 @@ kojo は拡張パッケージを `git clone` でインストールし、ビル�
 | `internal/chathistory` | スレッドごとの履歴ファイル |
 | `internal/agent`, `internal/uploadpath` | kojo と共有する型とパス |
 
+### 偽の Slack を相手にテストする
+
+テスト専用として、環境変数 `EXT_SLACK_API_URL` で Slack の Web API のアドレスを差し替えられる (例: `http://127.0.0.1:9000/api/`)。サービスも MCP サーバーも起動時に一度だけ読み、Socket Mode の接続先はそのサーバーが `apps.connections.open` に返したアドレスになる。kojo は決まった環境変数だけを渡してパッケージを起動するので、設定するにはテスト用にコピーした `kojo-package.json` の `contributes.service` と MCP サーバーの `env` に書く。通常の利用では設定しないこと。設定すると、トークンが Slack ではなくそのアドレスに送られる。
+
 ## ライセンス
 
 MIT

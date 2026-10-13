@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/slack-go/slack"
 
 	"github.com/loppo-llc/kojo-ext-slack/internal/agent"
 	"github.com/loppo-llc/kojo-ext-slack/internal/uploadpath"
@@ -84,6 +87,31 @@ func parseConfig(raw string) (agent.SlackBotConfig, error) {
 
 // validateTokens catches the usual mistake of pasting a token into the
 // wrong field (or pasting a signing secret) before anything connects.
+// envSlackAPIURL names a variable that points the Slack Web API client
+// at another server. It exists for tests that run the package against a
+// fake Slack; nothing in kojo sets it. The name is outside the KOJO_
+// prefix because kojo reserves that prefix: a package manifest's "env"
+// block, which is how a test hands the variable to both the service and
+// the MCP server, cannot set a KOJO_ name.
+const envSlackAPIURL = "EXT_SLACK_API_URL"
+
+// slackAPIOptions returns the client options for the override above, or
+// none. Socket Mode follows along by itself: the WebSocket address is
+// whatever apps.connections.open answers, and that call goes through the
+// same client.
+func slackAPIOptions(log *slog.Logger) []slack.Option {
+	u := strings.TrimSpace(os.Getenv(envSlackAPIURL))
+	if u == "" {
+		return nil
+	}
+	if !strings.HasSuffix(u, "/") {
+		// slack-go appends the method name to the URL as it stands.
+		u += "/"
+	}
+	log.Warn("using a Slack API address override; this is for testing only", "env", envSlackAPIURL, "url", u)
+	return []slack.Option{slack.OptionAPIURL(u)}
+}
+
 func validateTokens(appToken, botToken string) error {
 	var errs []error
 	if !strings.HasPrefix(appToken, "xapp-") {

@@ -402,8 +402,9 @@ func (b *Bot) Done() <-chan struct{} {
 
 // TestConnection performs auth.test to validate the tokens.
 // The provided context controls the request timeout.
-func TestConnection(ctx context.Context, appToken, botToken string) (team, botUser string, err error) {
-	api := slack.New(botToken, slack.OptionAppLevelToken(appToken))
+func TestConnection(ctx context.Context, appToken, botToken string, extraSlackOpts ...slack.Option) (team, botUser string, err error) {
+	opts := append([]slack.Option{slack.OptionAppLevelToken(appToken)}, extraSlackOpts...)
+	api := slack.New(botToken, opts...)
 	resp, err := api.AuthTestContext(ctx)
 	if err != nil {
 		return "", "", fmt.Errorf("auth.test failed: %w", err)

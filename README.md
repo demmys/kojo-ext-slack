@@ -173,13 +173,13 @@ The tools use the bot token, so they can do what the app's scopes allow (1-3) in
 
 ## Migrating from the built-in Slack integration
 
-kojo used to ship this bot built in, configured under each agent's settings. Versions of kojo that no longer contain it move an agent over when they start: they install this package, enable it for every agent that had a Slack bot, and carry over the two tokens, the four switches and the thread history. If that happened, there is nothing to do; check **Settings → Extensions → Slack** to confirm that the agent is enabled there.
+kojo used to ship this bot built in, configured under each agent's settings. Versions of kojo that no longer contain it move an agent over when they start: they install this package, enable it for every agent whose Slack bot was enabled, and carry over the two tokens, the four switches and the thread history. If that happened, there is nothing to do; check **Settings → Extensions → Slack** to confirm that the agent is enabled there. If kojo could not finish (no network, for example), the agent's settings page shows a notice with the reason and a retry button, and kojo tries again each time it starts.
 
 To move an agent over by hand:
 
 1. Install the package and enable it for the agent (section 2)
 2. Enter the **same** app-level token and bot token the built-in integration used, and set the four switches the way they were. The Slack app itself needs no change: the scopes, events and interactivity setting are the ones the built-in integration needed
-3. Make sure the built-in bot is off for that agent. Two connections on one app would each receive only part of the events
+3. On a kojo that still contains the built-in bot, make sure it is off for that agent. Two connections on one app would each receive only part of the events
 
 What carries over:
 
@@ -211,6 +211,11 @@ What does not carry over by itself:
 | After changing scopes nothing changes | Slack applies new scopes only after the app is reinstalled |
 
 Logs go to kojo's own log, tagged `extension=slack`.
+
+## Further reading
+
+- [docs/slack-errors.md](docs/slack-errors.md) — how a failed turn is reported in Slack
+- [docs/slack-questions.md](docs/slack-questions.md) — question cards: setup, rules, implementation notes
 
 ## Limitations
 

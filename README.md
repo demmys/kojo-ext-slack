@@ -206,7 +206,7 @@ What does not carry over by itself:
 | Attached files do not reach the agent | Add `files:read` and reinstall |
 | The answer appears all at once instead of streaming | Slack refused to stream into that conversation; the bot falls back to posting the finished answer. Nothing is lost |
 | The 回答する button does nothing | Turn on Interactivity (1-5) |
-| A tool fails with `missing_scope` | Add the scope the tool needs (1-3) , reinstall, and paste the bot token again |
+| A tool fails with `missing_scope` | Add the scope the tool needs (1-3), reinstall, and paste the bot token again |
 | A tool fails with `not_in_channel` | Invite the bot to the channel, or add `chat:write.public` |
 | After changing scopes nothing changes | Slack applies new scopes only after the app is reinstalled; paste the bot token again afterwards |
 

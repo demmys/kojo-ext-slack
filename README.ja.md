@@ -55,6 +55,8 @@ bot が返信するために必要なもの:
 | `mpim:history` | グループ DM での同じ用途 |
 | `users:read` | 各メッセージの書き手を名前でエージェントに伝える |
 | `files:read` | メッセージに添付されたファイルのダウンロード |
+| `channels:read` | パブリックチャンネル名の解決と `slack_list_channels` |
+| `groups:read` | プライベートチャンネルでの同じ用途 |
 
 任意:
 
@@ -66,7 +68,6 @@ bot が返信するために必要なもの:
 
 | スコープ | ツール |
 | --- | --- |
-| `channels:read`, `groups:read` | `slack_list_channels`、および各ツールでチャンネルを名前で指定すること |
 | `reactions:write` | `slack_add_reaction`, `slack_remove_reaction` |
 | `emoji:read` | `slack_list_emoji` |
 | `files:write` | `slack_upload_file` |

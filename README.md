@@ -55,6 +55,8 @@ Needed for the bot to answer:
 | `mpim:history` | the same in group DMs |
 | `users:read` | showing the agent who wrote each message by name |
 | `files:read` | downloading files attached to a message |
+| `channels:read` | resolving public channel names, and `slack_list_channels` |
+| `groups:read` | the same for private channels |
 
 Optional:
 
@@ -66,7 +68,6 @@ Needed for the tools the agent uses on its own (see [Tools the agent gets](#tool
 
 | Scope | Tools |
 | --- | --- |
-| `channels:read`, `groups:read` | `slack_list_channels`, and addressing a channel by name in any tool |
 | `reactions:write` | `slack_add_reaction`, `slack_remove_reaction` |
 | `emoji:read` | `slack_list_emoji` |
 | `files:write` | `slack_upload_file` |

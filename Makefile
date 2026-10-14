@@ -11,13 +11,13 @@ test:
 	go test ./...
 
 # kojo installs a package by cloning it, so the binaries are committed.
-# -trimpath and CGO_ENABLED=0 keep them reproducible and static.
+# -trimpath, -buildvcs=false and CGO_ENABLED=0 keep them reproducible and static.
 build:
 	@for p in $(PLATFORMS); do \
 		os=$${p%-*}; arch=$${p#*-}; ext=; \
 		[ "$$os" = windows ] && ext=.exe; \
 		echo "build $$os/$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(LDFLAGS)" \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -buildvcs=false -ldflags "$(LDFLAGS)" \
 			-o bin/$$p/kojo-ext-slack$$ext . || exit 1; \
 	done
 

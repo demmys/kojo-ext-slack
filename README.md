@@ -103,7 +103,7 @@ Open **App Home**, and under **Show Tabs** turn on **Messages Tab** and tick **A
 1. Open **OAuth & Permissions** (or **Install App**) and click **Install to Workspace**, then **Allow**
 2. **Copy** the **Bot User OAuth Token**. It starts with `xoxb-`
 
-Whenever you change scopes later, Slack asks you to **reinstall** the app; the bot token stays the same.
+Whenever you change scopes later, Slack asks you to **reinstall** the app. The bot token may change on reinstall, so copy it again from **OAuth & Permissions** and paste it into the extension settings.
 
 Both tokens are passwords. Do not paste them into chats or repositories. If one leaks, revoke it on the same page it was issued on.
 
@@ -206,9 +206,9 @@ What does not carry over by itself:
 | Attached files do not reach the agent | Add `files:read` and reinstall |
 | The answer appears all at once instead of streaming | Slack refused to stream into that conversation; the bot falls back to posting the finished answer. Nothing is lost |
 | The 回答する button does nothing | Turn on Interactivity (1-5) |
-| A tool fails with `missing_scope` | Add the scope the tool needs (1-3) and reinstall |
+| A tool fails with `missing_scope` | Add the scope the tool needs (1-3) , reinstall, and paste the bot token again |
 | A tool fails with `not_in_channel` | Invite the bot to the channel, or add `chat:write.public` |
-| After changing scopes nothing changes | Slack applies new scopes only after the app is reinstalled |
+| After changing scopes nothing changes | Slack applies new scopes only after the app is reinstalled; paste the bot token again afterwards |
 
 Logs go to kojo's own log, tagged `extension=slack`.
 

@@ -73,7 +73,7 @@ func TestHandleKeyedBackgroundTurnPostsIntoThread(t *testing.T) {
 	held.Wait()
 	finished := make(chan struct{})
 	go func() {
-		bot.HandleKeyedBackgroundTurn("test-agent", slackSessionKey("test-agent", "C1", "1700.1"), events, func() {})
+		bot.HandleKeyedBackgroundTurn("test-agent", slackSessionKey("test-agent", "C1", "1700.1"), events, func(bool) {})
 		close(finished)
 	}()
 	select {
@@ -111,7 +111,7 @@ func TestHandleKeyedBackgroundTurnIgnoresForeignKey(t *testing.T) {
 	events <- agent.ChatEvent{Type: "done", Message: &agent.Message{Content: "x"}}
 	close(events)
 	cancelled := false
-	bot.HandleKeyedBackgroundTurn("test-agent", "other-agent:slack:C1:1.0", events, func() { cancelled = true })
+	bot.HandleKeyedBackgroundTurn("test-agent", "other-agent:slack:C1:1.0", events, func(byUser bool) { cancelled = !byUser })
 	if !cancelled || len(calls()) != 0 {
 		t.Fatalf("foreign key: cancelled=%v calls=%v", cancelled, calls())
 	}

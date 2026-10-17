@@ -149,7 +149,7 @@ func (b *Bot) parseSlackSessionKey(agentID, sessionKey string) (channel, threadT
 // Slack thread. It opens a synthetic admission on the same thread FIFO as
 // user turns (precedent: resumeGoal) so posts never interleave, registers an
 // active turn so !stop works, and reuses the regular delivery pipeline.
-func (b *Bot) HandleKeyedBackgroundTurn(agentID, sessionKey string, events <-chan agent.ChatEvent, cancel func()) {
+func (b *Bot) HandleKeyedBackgroundTurn(agentID, sessionKey string, events <-chan agent.ChatEvent, cancel func(byUser bool)) {
 	defer func() {
 		for range events {
 		}
@@ -157,15 +157,16 @@ func (b *Bot) HandleKeyedBackgroundTurn(agentID, sessionKey string, events <-cha
 	channel, threadTS, ok := b.parseSlackSessionKey(agentID, sessionKey)
 	if !ok || b.ctx.Err() != nil {
 		if cancel != nil {
-			cancel()
+			cancel(false)
 		}
 		return
 	}
 	reservation := b.reserveThread(channel, threadTS)
 	turnCtx, turnCancel := context.WithCancel(b.ctx)
+	// The active turn's cancel runs only for a `!stop`.
 	active := b.registerBackgroundActiveTurn(channel, threadTS, func() {
 		if cancel != nil {
-			cancel()
+			cancel(true)
 		}
 		turnCancel()
 	})
@@ -178,7 +179,7 @@ func (b *Bot) HandleKeyedBackgroundTurn(agentID, sessionKey string, events <-cha
 	reservation.Wait()
 	if turnCtx.Err() != nil {
 		if cancel != nil {
-			cancel()
+			cancel(false)
 		}
 		return
 	}

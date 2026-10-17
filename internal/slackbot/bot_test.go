@@ -279,6 +279,30 @@ func TestIsStopCommandExactMatchOnly(t *testing.T) {
 	}
 }
 
+// A `!stop` cancels the turn context with agent.ErrStoppedByUser (kojo is
+// told the user stopped it); the turn's own cancel does not.
+func TestStopCommandMarksUserStop(t *testing.T) {
+	bot := newTestBot(t, agent.SlackBotConfig{})
+	defer bot.cancel()
+
+	ctx, cancel, userStop := newTurnContext(context.Background())
+	defer cancel()
+	turn := bot.registerActiveTurnForUser("C1", "thread.1", "U1", userStop)
+	defer bot.unregisterActiveTurn("C1", "thread.1", turn)
+	if _, started, denied := bot.cancelActiveTurnForCommand("C1", "thread.1", "U1"); !started || denied {
+		t.Fatalf("stop started=%v denied=%v", started, denied)
+	}
+	if !errors.Is(context.Cause(ctx), agent.ErrStoppedByUser) {
+		t.Fatalf("cause = %v, want ErrStoppedByUser", context.Cause(ctx))
+	}
+
+	ctx2, cancel2, _ := newTurnContext(context.Background())
+	cancel2()
+	if errors.Is(context.Cause(ctx2), agent.ErrStoppedByUser) {
+		t.Fatal("a plain cancel was marked as a user stop")
+	}
+}
+
 func TestActiveTurnCancelIsThreadScoped(t *testing.T) {
 	bot := newTestBot(t, agent.SlackBotConfig{})
 	defer bot.cancel()

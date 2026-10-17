@@ -741,6 +741,41 @@ func TestChatOneShotCancelDeliversTerminal(t *testing.T) {
 	}
 }
 
+// A `!stop` (cancel cause agent.ErrStoppedByUser) tells kojo the user
+// stopped the turn.
+func TestChatOneShotUserStopSendsByUser(t *testing.T) {
+	stop := make(chan struct{})
+	srv := newChatServer(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		startStream(w)
+		writeLine(t, w, map[string]any{"type": "text", "delta": "partial"})
+		select {
+		case <-stop:
+			writeLine(t, w, map[string]any{"type": "done", "errorMessage": agent.ErrMsgCancelled, "message": map[string]any{"content": "partial"}})
+		case <-r.Context().Done():
+		}
+	})
+	c, _ := newTestClient(t, srv)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	events, err := c.ChatOneShot(ctx, testAgent, "hi", agent.OneShotOpts{SessionKey: testKey, PreserveTerminalOnCancel: true})
+	if err != nil {
+		t.Fatalf("ChatOneShot: %v", err)
+	}
+	if first := waitFor(t, events, "first event"); first.Type != "text" {
+		t.Fatalf("first event = %+v", first)
+	}
+	cancel(agent.ErrStoppedByUser)
+	body := waitFor(t, srv.cancelled, "ext-chat/cancel")
+	if want := map[string]any{"sessionKey": testWire, "byUser": true}; !reflect.DeepEqual(body, want) {
+		t.Fatalf("cancel body = %v, want %v", body, want)
+	}
+	close(stop)
+	got := collect(t, events)
+	if len(got) != 1 || got[0].Type != "done" || got[0].ErrorMessage != agent.ErrMsgCancelled {
+		t.Fatalf("events after cancel = %+v, want the cancelled terminal", got)
+	}
+}
+
 func TestChatOneShotCancelFallsBackToDroppingTheStream(t *testing.T) {
 	gone := make(chan struct{})
 	srv := newChatServer(t, func(w http.ResponseWriter, r *http.Request, body map[string]any) {

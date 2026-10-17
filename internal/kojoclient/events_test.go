@@ -98,7 +98,7 @@ type backgroundTurn struct {
 	agentID string
 	key     string
 	events  <-chan agent.ChatEvent
-	cancel  func()
+	cancel  func(byUser bool)
 }
 
 type abandonedNotice struct {
@@ -124,7 +124,7 @@ func newFakeHandler() *fakeHandler {
 	return &fakeHandler{turns: make(chan backgroundTurn, 16), abandoned: make(chan abandonedNotice, 16)}
 }
 
-func (h *fakeHandler) HandleKeyedBackgroundTurn(agentID, sessionKey string, events <-chan agent.ChatEvent, cancel func()) {
+func (h *fakeHandler) HandleKeyedBackgroundTurn(agentID, sessionKey string, events <-chan agent.ChatEvent, cancel func(byUser bool)) {
 	h.turns <- backgroundTurn{agentID, sessionKey, events, cancel}
 	if h.drain {
 		for range events {
@@ -236,10 +236,10 @@ func TestEventsBackgroundTurnCancel(t *testing.T) {
 	conn.send(map[string]any{"type": "background_turn", "turnId": "t1", "sessionKey": testWire})
 	turn := waitFor(t, h.turns, "the background turn")
 	// A `!stop` reaches cancel from the bot's event loop; twice is one stop.
-	turn.cancel()
-	turn.cancel()
+	turn.cancel(true)
+	turn.cancel(true)
 	body := waitFor(t, srv.cancels, "background-cancel")
-	if want := map[string]any{"turnId": "t1"}; !reflect.DeepEqual(body, want) {
+	if want := map[string]any{"turnId": "t1", "byUser": true}; !reflect.DeepEqual(body, want) {
 		t.Fatalf("cancel body = %v, want %v", body, want)
 	}
 	conn.send(map[string]any{"type": "background_event", "turnId": "t1", "event": map[string]any{"type": "done", "errorMessage": agent.ErrMsgCancelled}})

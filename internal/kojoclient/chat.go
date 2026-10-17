@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -150,7 +151,7 @@ func (c *Client) pumpChat(ctx, reqCtx context.Context, abort context.CancelFunc,
 	go func() {
 		select {
 		case <-ctx.Done():
-			c.stopTurn(reqCtx, abort, key, cancellable, ended)
+			c.stopTurn(reqCtx, abort, key, cancellable, errors.Is(context.Cause(ctx), agent.ErrStoppedByUser), ended)
 		case <-ended:
 		}
 	}()
@@ -191,8 +192,9 @@ func (c *Client) pumpChat(ctx, reqCtx context.Context, abort context.CancelFunc,
 // stopTurn stops the running turn after its context was cancelled. Asking
 // kojo to cancel keeps the stream open for the terminal event; if that is
 // not possible the request is aborted, which stops the turn as well but
-// loses the terminal event.
-func (c *Client) stopTurn(reqCtx context.Context, abort context.CancelFunc, key string, cancellable bool, ended <-chan struct{}) {
+// loses the terminal event. byUser (a `!stop`) tells kojo a person stopped
+// the turn.
+func (c *Client) stopTurn(reqCtx context.Context, abort context.CancelFunc, key string, cancellable, byUser bool, ended <-chan struct{}) {
 	if !cancellable {
 		abort()
 		return
@@ -200,7 +202,8 @@ func (c *Client) stopTurn(reqCtx context.Context, abort context.CancelFunc, key 
 	cancelCtx, done := context.WithTimeout(reqCtx, cancelRequestTimeout)
 	err := c.call(cancelCtx, "cancel", struct {
 		SessionKey string `json:"sessionKey"`
-	}{key}, nil)
+		ByUser     bool   `json:"byUser,omitempty"`
+	}{key, byUser}, nil)
 	done()
 	if err != nil {
 		if reqCtx.Err() == nil {

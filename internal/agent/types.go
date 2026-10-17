@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/loppo-llc/kojo-ext-slack/internal/chathistory"
 )
@@ -177,6 +178,10 @@ type HandoffArrivalReservation interface {
 	Release()
 }
 
+// ErrStoppedByUser is the cancel cause (context.WithCancelCause) of a turn
+// a person stopped with `!stop`; kojo is then told the user stopped it.
+var ErrStoppedByUser = errors.New("turn stopped by the user")
+
 // KeyedBackgroundHandler is implemented by a response surface (the Slack bot)
 // that owns keyed conversations of an agent. It receives unsolicited turns
 // produced by a keyed lingering session — the completion notification of a
@@ -186,8 +191,10 @@ type KeyedBackgroundHandler interface {
 	// The stream has the same contract as a ChatOneShot result (deltas, then
 	// a single terminal done/error); a done carrying BackgroundTasksPending>0
 	// means more tasks are still running on the lingering process.
-	// cancel aborts the background turn (e.g. a user !stop).
-	HandleKeyedBackgroundTurn(agentID, sessionKey string, events <-chan ChatEvent, cancel func())
+	// cancel aborts the background turn; byUser marks an explicit stop by a
+	// person (a `!stop`), which kojo reports to the agent differently from
+	// a stop the bot made.
+	HandleKeyedBackgroundTurn(agentID, sessionKey string, events <-chan ChatEvent, cancel func(byUser bool))
 	// KeyedBackgroundTasksAbandoned reports that the keyed session exited
 	// while `pending` background tasks were still running (best-effort
 	// notice; their completion will never arrive).

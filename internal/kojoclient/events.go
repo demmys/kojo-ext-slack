@@ -191,10 +191,10 @@ func (s *eventSession) dispatch(evt pushEvent, turns map[string]chan<- agent.Cha
 		// The bot calls cancel from its Socket Mode loop (a `!stop`), where
 		// the in-process cancel was a context cancellation; it must return
 		// at once here too.
-		cancel := func() { once.Do(func() { go c.cancelBackgroundTurn(turnID) }) }
+		cancel := func(byUser bool) { once.Do(func() { go c.cancelBackgroundTurn(turnID, byUser) }) }
 		go relayEvents(in, out, func() {
 			c.logger.Warn("background turn cancelled: its events outran the thread", "turnId", turnID, "sessionKey", key)
-			cancel()
+			cancel(false)
 		})
 		s.deliver(key, func() { s.h.HandleKeyedBackgroundTurn(c.agentID, key, out, cancel) })
 	case "background_event":
@@ -312,12 +312,14 @@ func relayEvents(in <-chan agent.ChatEvent, out chan<- agent.ChatEvent, overflow
 }
 
 // cancelBackgroundTurn asks kojo to abort a background turn.
-func (c *Client) cancelBackgroundTurn(turnID string) {
+// byUser marks a `!stop`.
+func (c *Client) cancelBackgroundTurn(turnID string, byUser bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), backgroundCancelTimeout)
 	defer cancel()
 	err := c.call(ctx, "background-cancel", struct {
 		TurnID string `json:"turnId"`
-	}{turnID}, nil)
+		ByUser bool   `json:"byUser,omitempty"`
+	}{turnID, byUser}, nil)
 	if err != nil {
 		c.logger.Warn("background turn cancel was not delivered", "turnId", turnID, "err", err)
 	}

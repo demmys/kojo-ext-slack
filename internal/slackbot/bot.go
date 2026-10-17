@@ -844,8 +844,8 @@ func (b *Bot) enqueueIncomingTurn(ctx context.Context, channel, origThreadTS, re
 	select {
 	case b.sem <- struct{}{}:
 		turn, arrival := b.reserveThreadPair(channel, replyTS)
-		turnCtx, turnCancel := context.WithCancel(ctx)
-		active := b.registerActiveTurnForUser(channel, replyTS, userID, turnCancel)
+		turnCtx, turnCancel, userStop := newTurnContext(ctx)
+		active := b.registerActiveTurnForUser(channel, replyTS, userID, userStop)
 		go func() {
 			defer func() { <-b.sem }()
 			b.sendToAgentTurnReserved(ctx, channel, origThreadTS, replyTS, messageTS, text, displayName, userID,
@@ -957,8 +957,8 @@ func (b *Bot) enqueueIncomingTurnBefore(ctx context.Context, channel, origThread
 	select {
 	case b.sem <- struct{}{}:
 		turn, arrival := b.reserveThreadPair(channel, replyTS)
-		turnCtx, turnCancel := context.WithCancel(ctx)
-		active := b.registerActiveTurnForUser(channel, replyTS, userID, turnCancel)
+		turnCtx, turnCancel, userStop := newTurnContext(ctx)
+		active := b.registerActiveTurnForUser(channel, replyTS, userID, userStop)
 		releaseAdmission()
 		go func() {
 			defer func() { <-b.sem }()
@@ -1019,8 +1019,8 @@ func (b *Bot) sendToAgentTurn(ctx context.Context, channel, origThreadTS, replyT
 	// construction so that concurrent messages to the same thread observe
 	// each other's updates rather than building prompts from stale history.
 	reservation, arrival := b.reserveThreadPair(channel, replyTS)
-	turnCtx, turnCancel := context.WithCancel(ctx)
-	active := b.registerActiveTurnForUser(channel, replyTS, userID, turnCancel)
+	turnCtx, turnCancel, userStop := newTurnContext(ctx)
+	active := b.registerActiveTurnForUser(channel, replyTS, userID, userStop)
 	b.sendToAgentTurnReserved(ctx, channel, origThreadTS, replyTS, messageTS, text, displayName, userID, "", attachments, syntheticSystem, messageTS, nil, reservation, arrival, turnCtx, turnCancel, active)
 }
 
@@ -2581,6 +2581,14 @@ func (b *Bot) postMessage(ctx context.Context, channel, threadTS, text string) b
 	return false
 }
 
+// newTurnContext returns a turn's context, its plain cancel, and the cancel
+// an active turn's stop (a `!stop`) uses: that one marks the context with
+// agent.ErrStoppedByUser so kojo is told the user stopped the turn.
+func newTurnContext(parent context.Context) (context.Context, context.CancelFunc, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(parent)
+	return ctx, func() { cancel(nil) }, func() { cancel(agent.ErrStoppedByUser) }
+}
+
 type activeTurn struct {
 	// ownerUserID is immutable after registration; empty means an internal turn.
 	ownerUserID string
@@ -2984,12 +2992,12 @@ func (r *slackHandoffReservation) Activate(ctx context.Context, prompt, expected
 	// Register the continuation now, behind the source turn in the same FIFO.
 	// Once the source reaches its terminal event, !stop can therefore target a
 	// continuation waiting for its semaphore slot instead of seeing a gap.
-	arrivalCtx, arrivalCancel := context.WithCancel(r.bot.ctx)
+	arrivalCtx, arrivalCancel, arrivalUserStop := newTurnContext(r.bot.ctx)
 	ownerUserID := ""
 	if r.source != nil {
 		ownerUserID = r.source.ownerUserID
 	}
-	arrivalActive := r.bot.registerActiveTurnAfter(r.channel, r.threadTS, r.source, ownerUserID, arrivalCancel)
+	arrivalActive := r.bot.registerActiveTurnAfter(r.channel, r.threadTS, r.source, ownerUserID, arrivalUserStop)
 	go func() {
 		// Admission is already guaranteed by the FIFO reservation. Wait for
 		// the initiating turn to release it, then take a global execution slot

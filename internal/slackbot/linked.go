@@ -185,11 +185,21 @@ func (b *Bot) checkLinkedAccess(ctx context.Context, channelID, requesterID, cur
 		}
 		return err.Error(), ""
 	}
-	if !info.IsPrivate && !info.IsIM && !info.IsMpIM {
-		return "", info.Name
-	}
 	if requesterID == "" {
 		return errRequesterNotMember, info.Name
+	}
+	if !info.IsPrivate && !info.IsIM && !info.IsMpIM {
+		// Public channels are readable by every full member, but guests
+		// (restricted / ultra-restricted) only see channels they were
+		// added to, so they fall through to the membership check. A failed
+		// lookup withholds the content (fail closed).
+		user, err := b.api.GetUserInfoContext(lookupCtx, requesterID)
+		if err != nil || user == nil {
+			return "requester_lookup_failed", info.Name
+		}
+		if !user.IsRestricted && !user.IsUltraRestricted {
+			return "", info.Name
+		}
 	}
 	cursor := ""
 	for page := 0; page < maxMemberPages; page++ {
@@ -215,7 +225,7 @@ func (b *Bot) checkLinkedAccess(ctx context.Context, channelID, requesterID, cur
 func describeLinkedFetchError(err string) string {
 	switch err {
 	case errRequesterNotMember:
-		return "withheld: the requesting user is not a member of this private conversation"
+		return "withheld: the requesting user is not a member of this conversation"
 	case "not_in_channel", "channel_not_found":
 		return fmt.Sprintf("could not fetch (%s): the bot is probably not a member of this channel; ask the user to invite it or paste the content", err)
 	case "message not found":

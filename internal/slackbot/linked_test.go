@@ -31,6 +31,8 @@ func TestResolveLinkedMessages(t *testing.T) {
 		_ = r.ParseForm()
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case strings.HasSuffix(r.URL.Path, "users.info"):
+			_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"UREQ","name":"req"}}`))
 		case strings.HasSuffix(r.URL.Path, "conversations.info"):
 			switch r.Form.Get("channel") {
 			case "CNO":
@@ -160,5 +162,31 @@ func TestFetchLinkedReplyWithoutThreadTS(t *testing.T) {
 	fm := bot.fetchLinkedMessage(context.Background(), slackMessageRef{ChannelID: "C1", TS: "1790000000.000100"})
 	if fm.Text != "the reply" || fm.FetchError != "" {
 		t.Fatalf("fm = %+v", fm)
+	}
+}
+
+func TestResolveLinkedMessagesGuestPublicChannel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "users.info"):
+			_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"UG","is_restricted":true}}`))
+		case strings.HasSuffix(r.URL.Path, "conversations.info"):
+			_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"CPUB","name":"general"}}`))
+		case strings.HasSuffix(r.URL.Path, "conversations.members"):
+			_, _ = w.Write([]byte(`{"ok":true,"members":["UX"]}`))
+		default:
+			t.Errorf("unexpected fetch %s", r.URL.Path)
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[]}`))
+		}
+	}))
+	defer srv.Close()
+	bot := newTestBot(t, agent.SlackBotConfig{})
+	defer bot.cancel()
+	bot.api = slack.New("xoxb-test", slack.OptionAPIURL(srv.URL+"/"))
+	got := bot.resolveLinkedMessages(context.Background(), "https://x.slack.com/archives/CPUB/p1790000000000100", nil, "UG", "D1")
+	if len(got) != 1 || got[0].FetchError != errRequesterNotMember {
+		t.Fatalf("got %+v", got)
 	}
 }

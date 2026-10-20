@@ -50,6 +50,7 @@ type Bot struct {
 	mgr          ChatManager
 	logger       *slog.Logger
 	botUserID    string
+	botTeamID    string // workspace of the bot token; set from auth.test
 	botToken     string // stored for file downloads (slack.Client.token is private)
 
 	ctx    context.Context
@@ -372,6 +373,7 @@ func (b *Bot) Run() {
 		return
 	}
 	b.botUserID = authResp.UserID
+	b.botTeamID = authResp.TeamID
 	b.logger.Info("slack bot connected", "botUser", b.botUserID, "team", authResp.Team)
 	unregisterKeyed := b.registerKeyedBackground()
 	defer unregisterKeyed()

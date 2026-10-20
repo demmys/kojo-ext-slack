@@ -139,6 +139,21 @@ func (b *Bot) fetchLinkedMessage(ctx context.Context, ref slackMessageRef) forwa
 			fm.AuthorName = m.Username
 		}
 		fm.Text = m.Text
+		// The linked message may itself carry its content in attachments
+		// (e.g. it is a forward). Keep their text so it is not lost.
+		for _, a := range m.Attachments {
+			body := a.Text
+			if strings.TrimSpace(body) == "" {
+				body = a.Fallback
+			}
+			if strings.TrimSpace(body) == "" {
+				continue
+			}
+			if strings.TrimSpace(fm.Text) != "" {
+				fm.Text += "\n"
+			}
+			fm.Text += "> " + strings.ReplaceAll(body, "\n", "\n> ")
+		}
 		fm.Files = append([]slack.File(nil), m.Files...)
 		return fm
 	}
@@ -189,15 +204,17 @@ func (b *Bot) checkLinkedAccess(ctx context.Context, channelID, requesterID, cur
 		return errRequesterNotMember, info.Name
 	}
 	if !info.IsPrivate && !info.IsIM && !info.IsMpIM {
-		// Public channels are readable by every full member, but guests
-		// (restricted / ultra-restricted) only see channels they were
+		// Public channels are readable by every full member of the bot's
+		// workspace. Guests (restricted / ultra-restricted) and external
+		// (Slack Connect, other-team) users only see channels they were
 		// added to, so they fall through to the membership check. A failed
 		// lookup withholds the content (fail closed).
 		user, err := b.api.GetUserInfoContext(lookupCtx, requesterID)
 		if err != nil || user == nil {
 			return "requester_lookup_failed", info.Name
 		}
-		if !user.IsRestricted && !user.IsUltraRestricted {
+		internal := b.botTeamID != "" && user.TeamID == b.botTeamID
+		if internal && !user.IsRestricted && !user.IsUltraRestricted && !user.IsStranger {
 			return "", info.Name
 		}
 	}

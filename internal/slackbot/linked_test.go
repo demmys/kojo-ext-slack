@@ -32,7 +32,7 @@ func TestResolveLinkedMessages(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "users.info"):
-			_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"UREQ","name":"req"}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"UREQ","name":"req","team_id":"T1"}}`))
 		case strings.HasSuffix(r.URL.Path, "conversations.info"):
 			switch r.Form.Get("channel") {
 			case "CNO":
@@ -56,7 +56,7 @@ func TestResolveLinkedMessages(t *testing.T) {
 			t.Errorf("private channel fetched for non-member")
 			_, _ = w.Write([]byte(`{"ok":true,"messages":[]}`))
 		case strings.HasSuffix(r.URL.Path, "conversations.history") && r.Form.Get("channel") == "COK":
-			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U5","text":"hello","ts":"1790000000.000100","files":[{"id":"F7","name":"a.png"}]}]}`))
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U5","text":"hello","ts":"1790000000.000100","attachments":[{"text":"inner"}],"files":[{"id":"F7","name":"a.png"}]}]}`))
 		case strings.HasSuffix(r.URL.Path, "conversations.replies"):
 			if r.Form.Get("ts") != "1789992619.208539" {
 				t.Errorf("replies ts = %q", r.Form.Get("ts"))
@@ -71,6 +71,7 @@ func TestResolveLinkedMessages(t *testing.T) {
 	bot := newTestBot(t, agent.SlackBotConfig{})
 	defer bot.cancel()
 	bot.api = slack.New("xoxb-test", slack.OptionAPIURL(srv.URL+"/"))
+	bot.botTeamID = "T1"
 
 	text := "https://x.slack.com/archives/COK/p1790000000000100 " +
 		"https://x.slack.com/archives/CTH/p1790049629713879?thread_ts=1789992619.208539 " +
@@ -81,7 +82,7 @@ func TestResolveLinkedMessages(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d linked: %+v", len(got), got)
 	}
-	if got[0].AuthorID != "U5" || got[0].Text != "hello" || len(got[0].Files) != 1 || !got[0].Linked {
+	if got[0].AuthorID != "U5" || got[0].Text != "hello\n> inner" || len(got[0].Files) != 1 || !got[0].Linked {
 		t.Fatalf("ok link = %+v", got[0])
 	}
 	if got[1].Text != "reply" {
@@ -91,7 +92,7 @@ func TestResolveLinkedMessages(t *testing.T) {
 		t.Fatalf("failed link = %+v", got[2])
 	}
 	out := appendForwardedMessages("", got)
-	for _, want := range []string{"[Linked message]", "text:\nhello\n", "files: a.png", "status: could not fetch (not_in_channel)", "[/Linked message]"} {
+	for _, want := range []string{"[Linked message]", "text:\nhello\n> inner\n", "files: a.png", "status: could not fetch (not_in_channel)", "[/Linked message]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
 		}
@@ -186,6 +187,32 @@ func TestResolveLinkedMessagesGuestPublicChannel(t *testing.T) {
 	defer bot.cancel()
 	bot.api = slack.New("xoxb-test", slack.OptionAPIURL(srv.URL+"/"))
 	got := bot.resolveLinkedMessages(context.Background(), "https://x.slack.com/archives/CPUB/p1790000000000100", nil, "UG", "D1")
+	if len(got) != 1 || got[0].FetchError != errRequesterNotMember {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestResolveLinkedMessagesExternalUserPublicChannel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "users.info"):
+			_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"UE","team_id":"TOTHER"}}`))
+		case strings.HasSuffix(r.URL.Path, "conversations.info"):
+			_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"CPUB","name":"general"}}`))
+		case strings.HasSuffix(r.URL.Path, "conversations.members"):
+			_, _ = w.Write([]byte(`{"ok":true,"members":["UX"]}`))
+		default:
+			t.Errorf("unexpected fetch %s", r.URL.Path)
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[]}`))
+		}
+	}))
+	defer srv.Close()
+	bot := newTestBot(t, agent.SlackBotConfig{})
+	defer bot.cancel()
+	bot.api = slack.New("xoxb-test", slack.OptionAPIURL(srv.URL+"/"))
+	bot.botTeamID = "T1"
+	got := bot.resolveLinkedMessages(context.Background(), "https://x.slack.com/archives/CPUB/p1790000000000100", nil, "UE", "D1")
 	if len(got) != 1 || got[0].FetchError != errRequesterNotMember {
 		t.Fatalf("got %+v", got)
 	}

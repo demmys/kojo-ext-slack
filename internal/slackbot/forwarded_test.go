@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,7 +114,7 @@ func TestForwardedMessageFileIsDownloaded(t *testing.T) {
 	hold.Wait()
 	_, cancel := context.WithCancel(context.Background())
 	source := bot.registerActiveTurn("C1", "thread.1", cancel)
-	forwarded := forwardedFilesFromPayload(json.RawMessage(`{"event":{"attachments":[{"is_share":true,"files":[
+	forwarded := forwardedMessagesFromPayload(json.RawMessage(`{"event":{"attachments":[{"is_share":true,"files":[
 		{"id":"F9","name":"shot.png","mimetype":"image/png","size":3,"url_private_download":"` + fileServer.URL + `"}]}]}}`))
 	bot.handleMessageEventWithForwarded(context.Background(), &slackevents.MessageEvent{
 		User: "U123", Channel: "C1", ChannelType: "channel",
@@ -127,4 +128,47 @@ func TestForwardedMessageFileIsDownloaded(t *testing.T) {
 	cancel()
 	bot.finishActiveTurn("C1", "thread.1", source)
 	bot.releaseThreadReservation("C1", "thread.1", hold)
+}
+
+func TestForwardedMessagesFromPayloadKeepsContext(t *testing.T) {
+	raw := json.RawMessage(`{"event":{"attachments":[
+		{"title":"unfurl","text":"site preview","from_url":"https://example.com"},
+		{"is_share":true,"author_id":"U9","channel_id":"C42","channel_name":"dev-eng","ts":"1792483000.000100",
+		 "from_url":"https://x.slack.com/archives/C42/p1792483000000100","text":"look <@U9>",
+		 "files":[{"id":"F1","name":"shot.png"}]}]}}`)
+	msgs := forwardedMessagesFromPayload(raw)
+	if len(msgs) != 1 {
+		t.Fatalf("want 1 forward (unfurl skipped), got %d", len(msgs))
+	}
+	got := appendForwardedMessages("この画像見える?", msgs)
+	for _, want := range []string{
+		"この画像見える?\n\n[Forwarded message]\n",
+		"from: #dev-eng (C42) by <@U9> at ",
+		"link: https://x.slack.com/archives/C42/p1792483000000100\n",
+		"text:\nlook <@U9>\n",
+		"files: shot.png\n",
+		"[/Forwarded message]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if files := forwardedFiles(msgs); len(files) != 1 || files[0].ID != "F1" {
+		t.Fatalf("files = %+v", files)
+	}
+}
+
+func TestAppendForwardedMessagesTextOnlyAndFallbacks(t *testing.T) {
+	got := appendForwardedMessages("", []forwardedMessage{{IsShare: true, ChannelID: "C1", AuthorName: "Bob", Fallback: "fb"}})
+	want := "[Forwarded message]\nfrom: C1 by Bob\ntext:\nfb\n[/Forwarded message]"
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+}
+
+func TestForwardedMessagesNumericTS(t *testing.T) {
+	msgs := forwardedMessagesFromPayload(json.RawMessage(`{"event":{"attachments":[{"is_share":true,"ts":1792483000,"text":"hi"}]}}`))
+	if len(msgs) != 1 || msgs[0].TS != "1792483000" {
+		t.Fatalf("got %+v", msgs)
+	}
 }

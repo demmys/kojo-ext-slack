@@ -1,7 +1,7 @@
 {
   "id": "slack",
   "name": "Slack",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Connect a kojo agent to Slack: it answers DMs, mentions and threads over Socket Mode, and can post on its own.",
   "kojoVersion": ">0.135.0",
   "scopes": ["chat:session"],

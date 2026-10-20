@@ -562,7 +562,7 @@ func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackeven
 		if len(forwarded) > 0 || hasLinks {
 			fwdCtx, stopFwd := contextUntilTurnStop(ctx, active)
 			if hasLinks {
-				linked := b.resolveLinkedMessages(fwdCtx, linkText, forwarded)
+				linked := b.resolveLinkedMessages(fwdCtx, linkText, forwarded, userID, channel)
 				forwarded = append(forwarded, linked...)
 				files = mergeForwardedFiles(files, forwardedFiles(linked))
 			}
@@ -671,7 +671,7 @@ func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slacke
 		if len(forwarded) > 0 || hasLinks {
 			fwdCtx, stopFwd := contextUntilTurnStop(ctx, active)
 			if hasLinks {
-				linked := b.resolveLinkedMessages(fwdCtx, linkText, forwarded)
+				linked := b.resolveLinkedMessages(fwdCtx, linkText, forwarded, userID, channel)
 				forwarded = append(forwarded, linked...)
 				files = mergeForwardedFiles(files, forwardedFiles(linked))
 			}

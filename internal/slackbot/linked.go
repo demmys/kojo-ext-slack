@@ -60,7 +60,7 @@ func hasSlackMessageLinks(text string) bool {
 // typically not_in_channel when the bot is not a member of the source
 // channel — are returned as entries carrying FetchError so the agent is told
 // the content could not be retrieved instead of silently missing it.
-func (b *Bot) resolveLinkedMessages(ctx context.Context, text string, existing []forwardedMessage) []forwardedMessage {
+func (b *Bot) resolveLinkedMessages(ctx context.Context, text string, existing []forwardedMessage, requesterID, currentChannel string) []forwardedMessage {
 	refs := slackMessageRefs(text)
 	if len(refs) == 0 {
 		return nil
@@ -79,7 +79,15 @@ func (b *Bot) resolveLinkedMessages(ctx context.Context, text string, existing [
 		if len(out) >= maxLinkedMessages {
 			break
 		}
-		out = append(out, b.fetchLinkedMessage(ctx, ref))
+		if errCode, name := b.checkLinkedAccess(ctx, ref.ChannelID, requesterID, currentChannel); errCode != "" {
+			out = append(out, forwardedMessage{Linked: true, ChannelID: ref.ChannelID, ChannelName: name,
+				TS: flexTS(ref.TS), FromURL: ref.URL, FetchError: errCode})
+			continue
+		} else {
+			fm := b.fetchLinkedMessage(ctx, ref)
+			fm.ChannelName = name
+			out = append(out, fm)
+		}
 	}
 	return out
 }
@@ -108,6 +116,15 @@ func (b *Bot) fetchLinkedMessage(ctx context.Context, ref slackMessageRef) forwa
 			msgs = resp.Messages
 		}
 	}
+	if err == nil && !containsTS(msgs, ref.TS) && ref.ThreadTS == "" {
+		// A reply permalink copied without ?thread_ts= is not returned by
+		// conversations.history; replies accepts a reply ts and returns it.
+		if rmsgs, _, _, rerr := b.api.GetConversationRepliesContext(lookupCtx, &slack.GetConversationRepliesParameters{
+			ChannelID: ref.ChannelID, Timestamp: ref.TS, Oldest: ref.TS, Latest: ref.TS, Inclusive: true, Limit: 2,
+		}); rerr == nil {
+			msgs = rmsgs
+		}
+	}
 	if err != nil {
 		b.logger.Info("slack linked message fetch failed", "channel", ref.ChannelID, "ts", ref.TS, "err", err)
 		fm.FetchError = err.Error()
@@ -129,8 +146,76 @@ func (b *Bot) fetchLinkedMessage(ctx context.Context, ref slackMessageRef) forwa
 	return fm
 }
 
+func containsTS(msgs []slack.Message, ts string) bool {
+	for _, m := range msgs {
+		if m.Timestamp == ts {
+			return true
+		}
+	}
+	return false
+}
+
+// maxMemberPages bounds the conversations.members scan for one private
+// conversation (1000 members per page).
+const maxMemberPages = 10
+
+// errRequesterNotMember is the FetchError used when the bot could read a
+// private conversation that the requesting user is not a member of.
+const errRequesterNotMember = "requester_not_member"
+
+// checkLinkedAccess enforces that a permalink only exposes content the
+// requesting Slack user can already see. The bot token may be a member of
+// private channels or group DMs the requester is not in, so for anything
+// non-public the requester's membership is verified first. Public channels
+// are readable by every workspace member and need no check. Returns a
+// non-empty error code to withhold the content, and the channel name if known.
+func (b *Bot) checkLinkedAccess(ctx context.Context, channelID, requesterID, currentChannel string) (string, string) {
+	if channelID == currentChannel {
+		return "", ""
+	}
+	if b.api == nil {
+		return "slack client unavailable", ""
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, linkedMessageLookupTimeout)
+	defer cancel()
+	info, err := b.api.GetConversationInfoContext(lookupCtx, &slack.GetConversationInfoInput{ChannelID: channelID})
+	if err != nil || info == nil {
+		if err == nil {
+			return "channel_not_found", ""
+		}
+		return err.Error(), ""
+	}
+	if !info.IsPrivate && !info.IsIM && !info.IsMpIM {
+		return "", info.Name
+	}
+	if requesterID == "" {
+		return errRequesterNotMember, info.Name
+	}
+	cursor := ""
+	for page := 0; page < maxMemberPages; page++ {
+		members, next, err := b.api.GetUsersInConversationContext(lookupCtx, &slack.GetUsersInConversationParameters{
+			ChannelID: channelID, Cursor: cursor, Limit: 1000,
+		})
+		if err != nil {
+			return err.Error(), info.Name
+		}
+		for _, m := range members {
+			if m == requesterID {
+				return "", info.Name
+			}
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	return errRequesterNotMember, info.Name
+}
+
 func describeLinkedFetchError(err string) string {
 	switch err {
+	case errRequesterNotMember:
+		return "withheld: the requesting user is not a member of this private conversation"
 	case "not_in_channel", "channel_not_found":
 		return fmt.Sprintf("could not fetch (%s): the bot is probably not a member of this channel; ask the user to invite it or paste the content", err)
 	case "message not found":

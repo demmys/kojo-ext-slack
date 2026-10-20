@@ -556,9 +556,16 @@ func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackeven
 		files = append(files, ev.Message.Files...)
 	}
 	files = mergeForwardedFiles(files, forwardedFiles(forwarded))
+	linkText := ev.Text
+	hasLinks := hasSlackMessageLinks(linkText)
 	process := func() {
-		if len(forwarded) > 0 {
+		if len(forwarded) > 0 || hasLinks {
 			fwdCtx, stopFwd := contextUntilTurnStop(ctx, active)
+			if hasLinks {
+				linked := b.resolveLinkedMessages(fwdCtx, linkText, forwarded)
+				forwarded = append(forwarded, linked...)
+				files = mergeForwardedFiles(files, forwardedFiles(linked))
+			}
 			b.resolveForwardedChannelNames(fwdCtx, forwarded)
 			stopFwd()
 			text = appendForwardedMessages(text, forwarded)
@@ -577,7 +584,7 @@ func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackeven
 		b.processIncomingWithReservedAdmission(ctx, channel, threadTS, messageTS, text, userID,
 			attachments, len(files) == 0, active, admission)
 	}
-	if (len(files) > 0 || len(forwarded) > 0) && admission != nil {
+	if (len(files) > 0 || len(forwarded) > 0 || hasLinks) && admission != nil {
 		go process()
 	} else {
 		process()
@@ -658,9 +665,16 @@ func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slacke
 	}
 	channel, threadTS, messageTS, userID := ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User
 	files := mergeForwardedFiles(append([]slack.File(nil), ev.Files...), forwardedFiles(forwarded))
+	linkText := ev.Text
+	hasLinks := hasSlackMessageLinks(linkText)
 	process := func() {
-		if len(forwarded) > 0 {
+		if len(forwarded) > 0 || hasLinks {
 			fwdCtx, stopFwd := contextUntilTurnStop(ctx, active)
+			if hasLinks {
+				linked := b.resolveLinkedMessages(fwdCtx, linkText, forwarded)
+				forwarded = append(forwarded, linked...)
+				files = mergeForwardedFiles(files, forwardedFiles(linked))
+			}
 			b.resolveForwardedChannelNames(fwdCtx, forwarded)
 			stopFwd()
 			text = appendForwardedMessages(text, forwarded)
@@ -679,7 +693,7 @@ func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slacke
 		b.processIncomingWithReservedAdmission(ctx, channel, threadTS, messageTS, text, userID,
 			attachments, len(files) == 0, active, admission)
 	}
-	if (len(files) > 0 || len(forwarded) > 0) && admission != nil {
+	if (len(files) > 0 || len(forwarded) > 0 || hasLinks) && admission != nil {
 		go process()
 	} else {
 		process()

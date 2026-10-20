@@ -436,7 +436,7 @@ func (b *Bot) handleEvent(ctx context.Context, evt socketmode.Event) {
 			return
 		}
 		b.sm.Ack(*evt.Request)
-		b.handleEventsAPIWithForwarded(ctx, evtAPI, forwardedFilesFromPayload(evt.Request.Payload))
+		b.handleEventsAPIWithForwarded(ctx, evtAPI, forwardedMessagesFromPayload(evt.Request.Payload))
 
 	case socketmode.EventTypeConnectionError:
 		b.logger.Warn("slack connection error", "data", evt.Data)
@@ -459,7 +459,7 @@ func (b *Bot) handleEventsAPI(ctx context.Context, evt slackevents.EventsAPIEven
 // handleEventsAPIWithForwarded dispatches an Events API envelope. forwarded
 // carries files found inside forwarded/shared message attachments of the raw
 // payload; slack-go's typed events drop them (see forwardedFilesFromPayload).
-func (b *Bot) handleEventsAPIWithForwarded(ctx context.Context, evt slackevents.EventsAPIEvent, forwarded []slack.File) {
+func (b *Bot) handleEventsAPIWithForwarded(ctx context.Context, evt slackevents.EventsAPIEvent, forwarded []forwardedMessage) {
 	switch evt.Type {
 	case slackevents.CallbackEvent:
 		b.handleCallbackEventWithForwarded(ctx, evt.InnerEvent, forwarded)
@@ -470,7 +470,7 @@ func (b *Bot) handleCallbackEvent(ctx context.Context, inner slackevents.EventsA
 	b.handleCallbackEventWithForwarded(ctx, inner, nil)
 }
 
-func (b *Bot) handleCallbackEventWithForwarded(ctx context.Context, inner slackevents.EventsAPIInnerEvent, forwarded []slack.File) {
+func (b *Bot) handleCallbackEventWithForwarded(ctx context.Context, inner slackevents.EventsAPIInnerEvent, forwarded []forwardedMessage) {
 	switch ev := inner.Data.(type) {
 	case *slackevents.MessageEvent:
 		b.handleMessageEventWithForwarded(ctx, ev, forwarded)
@@ -483,7 +483,7 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 	b.handleMessageEventWithForwarded(ctx, ev, nil)
 }
 
-func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackevents.MessageEvent, forwarded []slack.File) {
+func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackevents.MessageEvent, forwarded []forwardedMessage) {
 	// Ignore bot's own messages
 	if ev.User == b.botUserID || ev.User == "" {
 		return
@@ -555,8 +555,14 @@ func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackeven
 	if ev.Message != nil {
 		files = append(files, ev.Message.Files...)
 	}
-	files = mergeForwardedFiles(files, forwarded)
+	files = mergeForwardedFiles(files, forwardedFiles(forwarded))
 	process := func() {
+		if len(forwarded) > 0 {
+			fwdCtx, stopFwd := contextUntilTurnStop(ctx, active)
+			b.resolveForwardedChannelNames(fwdCtx, forwarded)
+			stopFwd()
+			text = appendForwardedMessages(text, forwarded)
+		}
 		var attachments []agent.MessageAttachment
 		if len(files) > 0 {
 			b.logger.Debug("slack files attached", "count", len(files))
@@ -571,7 +577,7 @@ func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackeven
 		b.processIncomingWithReservedAdmission(ctx, channel, threadTS, messageTS, text, userID,
 			attachments, len(files) == 0, active, admission)
 	}
-	if len(files) > 0 && admission != nil {
+	if (len(files) > 0 || len(forwarded) > 0) && admission != nil {
 		go process()
 	} else {
 		process()
@@ -622,7 +628,7 @@ func (b *Bot) handleAppMentionEvent(ctx context.Context, ev *slackevents.AppMent
 	b.handleAppMentionEventWithForwarded(ctx, ev, nil)
 }
 
-func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slackevents.AppMentionEvent, forwarded []slack.File) {
+func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slackevents.AppMentionEvent, forwarded []forwardedMessage) {
 	if !b.config.ReactMention() {
 		return
 	}
@@ -651,8 +657,14 @@ func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slacke
 		return
 	}
 	channel, threadTS, messageTS, userID := ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User
-	files := mergeForwardedFiles(append([]slack.File(nil), ev.Files...), forwarded)
+	files := mergeForwardedFiles(append([]slack.File(nil), ev.Files...), forwardedFiles(forwarded))
 	process := func() {
+		if len(forwarded) > 0 {
+			fwdCtx, stopFwd := contextUntilTurnStop(ctx, active)
+			b.resolveForwardedChannelNames(fwdCtx, forwarded)
+			stopFwd()
+			text = appendForwardedMessages(text, forwarded)
+		}
 		var attachments []agent.MessageAttachment
 		if len(files) > 0 {
 			b.logger.Debug("slack files attached to mention", "count", len(files))
@@ -667,7 +679,7 @@ func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slacke
 		b.processIncomingWithReservedAdmission(ctx, channel, threadTS, messageTS, text, userID,
 			attachments, len(files) == 0, active, admission)
 	}
-	if len(files) > 0 && admission != nil {
+	if (len(files) > 0 || len(forwarded) > 0) && admission != nil {
 		go process()
 	} else {
 		process()

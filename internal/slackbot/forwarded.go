@@ -28,6 +28,12 @@ type forwardedMessage struct {
 	Text        string       `json:"text"`
 	Fallback    string       `json:"fallback"`
 	Files       []slack.File `json:"files"`
+
+	// Linked marks a message referenced by a permalink (Slack's own
+	// unfurl, or a link in the text resolved by the bot) rather than a
+	// forward. FetchError is set when a linked message could not be read.
+	Linked     bool   `json:"-"`
+	FetchError string `json:"-"`
 }
 
 // isForward reports whether the attachment represents a forwarded message
@@ -58,6 +64,7 @@ func forwardedMessagesFromPayload(raw json.RawMessage) []forwardedMessage {
 	var msgs []forwardedMessage
 	for _, a := range payload.Event.Attachments {
 		if a.isForward() {
+			a.Linked = a.IsMsgUnfurl && !a.IsShare
 			msgs = append(msgs, a)
 		}
 	}
@@ -109,7 +116,11 @@ func (b *Bot) resolveForwardedChannelNames(ctx context.Context, msgs []forwarded
 func appendForwardedMessages(text string, msgs []forwardedMessage) string {
 	for _, m := range msgs {
 		var sb strings.Builder
-		sb.WriteString("[Forwarded message]\n")
+		label := "Forwarded message"
+		if m.Linked {
+			label = "Linked message"
+		}
+		sb.WriteString("[" + label + "]\n")
 		var from []string
 		switch {
 		case m.ChannelName != "" && m.ChannelID != "":
@@ -134,6 +145,9 @@ func appendForwardedMessages(text string, msgs []forwardedMessage) string {
 		if m.FromURL != "" {
 			sb.WriteString("link: " + m.FromURL + "\n")
 		}
+		if m.FetchError != "" {
+			sb.WriteString("status: " + describeLinkedFetchError(m.FetchError) + "\n")
+		}
 		body := m.Text
 		if strings.TrimSpace(body) == "" && len(m.Files) == 0 {
 			body = m.Fallback
@@ -152,7 +166,7 @@ func appendForwardedMessages(text string, msgs []forwardedMessage) string {
 			}
 			sb.WriteString("files: " + strings.Join(names, ", ") + "\n")
 		}
-		sb.WriteString("[/Forwarded message]")
+		sb.WriteString("[/" + label + "]")
 		if strings.TrimSpace(text) != "" {
 			text += "\n\n"
 		}

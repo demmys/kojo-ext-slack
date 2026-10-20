@@ -80,6 +80,12 @@ type Bot struct {
 	stopAllInflight map[string]int       // key: keyed session key
 	stopAllDone     map[string]time.Time // last successful stop per key
 
+	// delivered deduplicates the message/app_mention event pair Slack sends
+	// for one bot mention, so a single post never becomes two agent turns.
+	// Socket Mode events are handled sequentially, so a handled() check
+	// followed by mark() in the same handler is not raced by the paired event.
+	delivered deliveredMessages
+
 	// userCache caches Slack user ID → display name for the Bot's lifetime.
 	// Display names rarely change; the cache is cleared on Bot restart.
 	userCacheMu sync.RWMutex
@@ -472,6 +478,10 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 		b.logger.Debug("slack message ignored", "subType", ev.SubType, "user", ev.User)
 		return
 	}
+	if b.delivered.handled(ev.Channel, ev.TimeStamp) {
+		b.logger.Debug("slack message already handled via app_mention", "channel", ev.Channel, "ts", ev.TimeStamp)
+		return
+	}
 
 	// Stop commands bypass attachment downloads, the per-thread FIFO, and the
 	// global chat semaphore. They still honor the configured surface gate and,
@@ -479,15 +489,23 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 	// Otherwise the command could sit behind the exact turn it needs to
 	// interrupt, while an unrelated channel member could cancel someone else's
 	// work.
+	//
+	// The bot mention is stripped for command detection, like the app_mention
+	// handler does: `@bot !stop` is delivered as both events, and whichever
+	// arrives first claims the post, so the message path must recognize the
+	// command too or the paired app_mention stop would be deduplicated away.
+	commandText := StripBotMention(ev.Text, b.botUserID)
 	if ev.ChannelType == "im" {
 		if !b.config.ReactDM() {
 			return
 		}
-		if b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, ev.Text) {
+		if b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, commandText) {
+			b.delivered.mark(ev.Channel, ev.TimeStamp)
 			return
 		}
 	} else if b.config.ReactThread() && ev.ThreadTimeStamp != "" &&
-		b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, ev.Text) {
+		b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, commandText) {
+		b.delivered.mark(ev.Channel, ev.TimeStamp)
 		return
 	}
 
@@ -504,6 +522,7 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 	if !accepted {
 		return
 	}
+	b.delivered.mark(ev.Channel, ev.TimeStamp)
 
 	replyTS := ev.ThreadTimeStamp
 	if replyTS == "" && b.config.ThreadReplies {
@@ -590,11 +609,17 @@ func (b *Bot) handleAppMentionEvent(ctx context.Context, ev *slackevents.AppMent
 	if ev.User == b.botUserID || ev.User == "" {
 		return
 	}
+	if b.delivered.handled(ev.Channel, ev.TimeStamp) {
+		b.logger.Debug("slack app_mention already handled via message", "channel", ev.Channel, "ts", ev.TimeStamp)
+		return
+	}
 	// Strip the bot mention from the message
 	text := StripBotMention(ev.Text, b.botUserID)
 	if b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, text) {
+		b.delivered.mark(ev.Channel, ev.TimeStamp)
 		return
 	}
+	b.delivered.mark(ev.Channel, ev.TimeStamp)
 	replyTS := ev.ThreadTimeStamp
 	if replyTS == "" && b.config.ThreadReplies {
 		replyTS = ev.TimeStamp

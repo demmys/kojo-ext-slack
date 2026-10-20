@@ -24,7 +24,7 @@ type forwardedMessage struct {
 	ChannelID   string       `json:"channel_id"`
 	ChannelName string       `json:"channel_name"`
 	FromURL     string       `json:"from_url"`
-	TS          string       `json:"ts"`
+	TS          flexTS       `json:"ts"`
 	Text        string       `json:"text"`
 	Fallback    string       `json:"fallback"`
 	Files       []slack.File `json:"files"`
@@ -125,7 +125,7 @@ func appendForwardedMessages(text string, msgs []forwardedMessage) string {
 		case m.AuthorName != "":
 			from = append(from, "by "+m.AuthorName)
 		}
-		if t := formatSlackTS(m.TS); t != "" {
+		if t := formatSlackTS(string(m.TS)); t != "" {
 			from = append(from, "at "+t)
 		}
 		if len(from) > 0 {
@@ -235,4 +235,24 @@ func (b *Bot) resolveFileDownloadURLs(ctx context.Context, files []slack.File) [
 		f.URLPrivateDownload = info.URLPrivateDownload
 	}
 	return files
+}
+
+// flexTS accepts an attachment ts given either as a JSON string or a number
+// (legacy attachments allow both). Unparseable values decode to empty so one
+// odd field never drops the whole forwarded payload.
+type flexTS string
+
+func (t *flexTS) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*t = flexTS(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err == nil {
+		*t = flexTS(n.String())
+		return nil
+	}
+	*t = ""
+	return nil
 }

@@ -165,3 +165,10 @@ func TestAppendForwardedMessagesTextOnlyAndFallbacks(t *testing.T) {
 		t.Fatalf("got %q\nwant %q", got, want)
 	}
 }
+
+func TestForwardedMessagesNumericTS(t *testing.T) {
+	msgs := forwardedMessagesFromPayload(json.RawMessage(`{"event":{"attachments":[{"is_share":true,"ts":1792483000,"text":"hi"}]}}`))
+	if len(msgs) != 1 || msgs[0].TS != "1792483000" {
+		t.Fatalf("got %+v", msgs)
+	}
+}

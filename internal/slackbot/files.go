@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,6 +154,9 @@ func appendSlackHistoryFileNames(text string, files []slack.File) string {
 // downloadOneFile downloads a single Slack file and saves it locally.
 // The filename uses {unixnano}_{original_name} to match the WebUI upload convention.
 func (b *Bot) downloadOneFile(ctx context.Context, dir string, f *slack.File) (string, error) {
+	if !allowedSlackFileURL(f.URLPrivateDownload) {
+		return "", fmt.Errorf("refusing non-Slack download URL")
+	}
 	localPath := buildLocalPath(dir, time.Now(), f.Name)
 
 	// Slack private URLs require bot token in Authorization header.
@@ -253,4 +257,15 @@ func downloadedAttachments(files []downloadedFile) []agent.MessageAttachment {
 		})
 	}
 	return out
+}
+
+// allowedSlackFileURL guards the bot token: it is only ever sent to Slack's
+// own https file hosts. Overridable in tests.
+var allowedSlackFileURL = func(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	return h == "slack.com" || strings.HasSuffix(h, ".slack.com")
 }

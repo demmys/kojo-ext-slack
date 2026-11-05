@@ -557,7 +557,7 @@ func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackeven
 	if ev.Message != nil {
 		files = append(files, ev.Message.Files...)
 	}
-	files = mergeForwardedFiles(files, forwardedFiles(forwarded))
+	files = mergeForwardedFiles(files, untrustedForwardedFiles(forwarded))
 	linkText := ev.Text
 	hasLinks := hasSlackMessageLinks(linkText)
 	process := func() {
@@ -576,7 +576,7 @@ func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackeven
 		if len(files) > 0 {
 			b.logger.Debug("slack files attached", "count", len(files))
 			downloadCtx, stopDownload := contextUntilTurnStop(ctx, active)
-			files = b.resolveFileDownloadURLs(downloadCtx, files)
+			files = b.resolveFileDownloadURLs(downloadCtx, files, userID, channel)
 			downloaded, errs := b.downloadSlackFiles(downloadCtx, files)
 			stopDownload()
 			attachments = downloadedAttachments(downloaded)
@@ -666,7 +666,7 @@ func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slacke
 		return
 	}
 	channel, threadTS, messageTS, userID := ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User
-	files := mergeForwardedFiles(append([]slack.File(nil), ev.Files...), forwardedFiles(forwarded))
+	files := mergeForwardedFiles(append([]slack.File(nil), ev.Files...), untrustedForwardedFiles(forwarded))
 	linkText := ev.Text
 	hasLinks := hasSlackMessageLinks(linkText)
 	process := func() {
@@ -685,7 +685,7 @@ func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slacke
 		if len(files) > 0 {
 			b.logger.Debug("slack files attached to mention", "count", len(files))
 			downloadCtx, stopDownload := contextUntilTurnStop(ctx, active)
-			files = b.resolveFileDownloadURLs(downloadCtx, files)
+			files = b.resolveFileDownloadURLs(downloadCtx, files, userID, channel)
 			downloaded, errs := b.downloadSlackFiles(downloadCtx, files)
 			stopDownload()
 			attachments = downloadedAttachments(downloaded)

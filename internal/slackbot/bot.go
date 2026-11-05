@@ -50,6 +50,7 @@ type Bot struct {
 	mgr          ChatManager
 	logger       *slog.Logger
 	botUserID    string
+	botTeamID    string // workspace of the bot token; set from auth.test
 	botToken     string // stored for file downloads (slack.Client.token is private)
 
 	ctx    context.Context
@@ -79,6 +80,12 @@ type Bot struct {
 	stopAllMu       sync.Mutex
 	stopAllInflight map[string]int       // key: keyed session key
 	stopAllDone     map[string]time.Time // last successful stop per key
+
+	// delivered deduplicates the message/app_mention event pair Slack sends
+	// for one bot mention, so a single post never becomes two agent turns.
+	// Socket Mode events are handled sequentially, so a handled() check
+	// followed by mark() in the same handler is not raced by the paired event.
+	delivered deliveredMessages
 
 	// userCache caches Slack user ID → display name for the Bot's lifetime.
 	// Display names rarely change; the cache is cleared on Bot restart.
@@ -366,6 +373,7 @@ func (b *Bot) Run() {
 		return
 	}
 	b.botUserID = authResp.UserID
+	b.botTeamID = authResp.TeamID
 	b.logger.Info("slack bot connected", "botUser", b.botUserID, "team", authResp.Team)
 	unregisterKeyed := b.registerKeyedBackground()
 	defer unregisterKeyed()
@@ -430,7 +438,7 @@ func (b *Bot) handleEvent(ctx context.Context, evt socketmode.Event) {
 			return
 		}
 		b.sm.Ack(*evt.Request)
-		b.handleEventsAPI(ctx, evtAPI)
+		b.handleEventsAPIWithForwarded(ctx, evtAPI, forwardedMessagesFromPayload(evt.Request.Payload))
 
 	case socketmode.EventTypeConnectionError:
 		b.logger.Warn("slack connection error", "data", evt.Data)
@@ -447,22 +455,37 @@ func (b *Bot) handleEvent(ctx context.Context, evt socketmode.Event) {
 }
 
 func (b *Bot) handleEventsAPI(ctx context.Context, evt slackevents.EventsAPIEvent) {
+	b.handleEventsAPIWithForwarded(ctx, evt, nil)
+}
+
+// handleEventsAPIWithForwarded dispatches an Events API envelope. forwarded
+// carries files found inside forwarded/shared message attachments of the raw
+// payload; slack-go's typed events drop them (see forwardedFilesFromPayload).
+func (b *Bot) handleEventsAPIWithForwarded(ctx context.Context, evt slackevents.EventsAPIEvent, forwarded []forwardedMessage) {
 	switch evt.Type {
 	case slackevents.CallbackEvent:
-		b.handleCallbackEvent(ctx, evt.InnerEvent)
+		b.handleCallbackEventWithForwarded(ctx, evt.InnerEvent, forwarded)
 	}
 }
 
 func (b *Bot) handleCallbackEvent(ctx context.Context, inner slackevents.EventsAPIInnerEvent) {
+	b.handleCallbackEventWithForwarded(ctx, inner, nil)
+}
+
+func (b *Bot) handleCallbackEventWithForwarded(ctx context.Context, inner slackevents.EventsAPIInnerEvent, forwarded []forwardedMessage) {
 	switch ev := inner.Data.(type) {
 	case *slackevents.MessageEvent:
-		b.handleMessageEvent(ctx, ev)
+		b.handleMessageEventWithForwarded(ctx, ev, forwarded)
 	case *slackevents.AppMentionEvent:
-		b.handleAppMentionEvent(ctx, ev)
+		b.handleAppMentionEventWithForwarded(ctx, ev, forwarded)
 	}
 }
 
 func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEvent) {
+	b.handleMessageEventWithForwarded(ctx, ev, nil)
+}
+
+func (b *Bot) handleMessageEventWithForwarded(ctx context.Context, ev *slackevents.MessageEvent, forwarded []forwardedMessage) {
 	// Ignore bot's own messages
 	if ev.User == b.botUserID || ev.User == "" {
 		return
@@ -472,6 +495,10 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 		b.logger.Debug("slack message ignored", "subType", ev.SubType, "user", ev.User)
 		return
 	}
+	if b.delivered.handled(ev.Channel, ev.TimeStamp) {
+		b.logger.Debug("slack message already handled via app_mention", "channel", ev.Channel, "ts", ev.TimeStamp)
+		return
+	}
 
 	// Stop commands bypass attachment downloads, the per-thread FIFO, and the
 	// global chat semaphore. They still honor the configured surface gate and,
@@ -479,15 +506,23 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 	// Otherwise the command could sit behind the exact turn it needs to
 	// interrupt, while an unrelated channel member could cancel someone else's
 	// work.
+	//
+	// The bot mention is stripped for command detection, like the app_mention
+	// handler does: `@bot !stop` is delivered as both events, and whichever
+	// arrives first claims the post, so the message path must recognize the
+	// command too or the paired app_mention stop would be deduplicated away.
+	commandText := StripBotMention(ev.Text, b.botUserID)
 	if ev.ChannelType == "im" {
 		if !b.config.ReactDM() {
 			return
 		}
-		if b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, ev.Text) {
+		if b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, commandText) {
+			b.delivered.mark(ev.Channel, ev.TimeStamp)
 			return
 		}
 	} else if b.config.ReactThread() && ev.ThreadTimeStamp != "" &&
-		b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, ev.Text) {
+		b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, commandText) {
+		b.delivered.mark(ev.Channel, ev.TimeStamp)
 		return
 	}
 
@@ -504,6 +539,7 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 	if !accepted {
 		return
 	}
+	b.delivered.mark(ev.Channel, ev.TimeStamp)
 
 	replyTS := ev.ThreadTimeStamp
 	if replyTS == "" && b.config.ThreadReplies {
@@ -521,11 +557,26 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 	if ev.Message != nil {
 		files = append(files, ev.Message.Files...)
 	}
+	files = mergeForwardedFiles(files, forwardedFiles(forwarded))
+	linkText := ev.Text
+	hasLinks := hasSlackMessageLinks(linkText)
 	process := func() {
+		if len(forwarded) > 0 || hasLinks {
+			fwdCtx, stopFwd := contextUntilTurnStop(ctx, active)
+			if hasLinks {
+				linked := b.resolveLinkedMessages(fwdCtx, linkText, forwarded, userID, channel)
+				forwarded = append(forwarded, linked...)
+				files = mergeForwardedFiles(files, forwardedFiles(linked))
+			}
+			b.resolveForwardedChannelNames(fwdCtx, forwarded)
+			stopFwd()
+			text = appendForwardedMessages(text, forwarded)
+		}
 		var attachments []agent.MessageAttachment
 		if len(files) > 0 {
 			b.logger.Debug("slack files attached", "count", len(files))
 			downloadCtx, stopDownload := contextUntilTurnStop(ctx, active)
+			files = b.resolveFileDownloadURLs(downloadCtx, files)
 			downloaded, errs := b.downloadSlackFiles(downloadCtx, files)
 			stopDownload()
 			attachments = downloadedAttachments(downloaded)
@@ -535,7 +586,7 @@ func (b *Bot) handleMessageEvent(ctx context.Context, ev *slackevents.MessageEve
 		b.processIncomingWithReservedAdmission(ctx, channel, threadTS, messageTS, text, userID,
 			attachments, len(files) == 0, active, admission)
 	}
-	if len(files) > 0 && admission != nil {
+	if (len(files) > 0 || len(forwarded) > 0 || hasLinks) && admission != nil {
 		go process()
 	} else {
 		process()
@@ -583,6 +634,10 @@ func (b *Bot) shouldAutoReply(channelID, threadTS, rawText string) bool {
 }
 
 func (b *Bot) handleAppMentionEvent(ctx context.Context, ev *slackevents.AppMentionEvent) {
+	b.handleAppMentionEventWithForwarded(ctx, ev, nil)
+}
+
+func (b *Bot) handleAppMentionEventWithForwarded(ctx context.Context, ev *slackevents.AppMentionEvent, forwarded []forwardedMessage) {
 	if !b.config.ReactMention() {
 		return
 	}
@@ -590,11 +645,17 @@ func (b *Bot) handleAppMentionEvent(ctx context.Context, ev *slackevents.AppMent
 	if ev.User == b.botUserID || ev.User == "" {
 		return
 	}
+	if b.delivered.handled(ev.Channel, ev.TimeStamp) {
+		b.logger.Debug("slack app_mention already handled via message", "channel", ev.Channel, "ts", ev.TimeStamp)
+		return
+	}
 	// Strip the bot mention from the message
 	text := StripBotMention(ev.Text, b.botUserID)
 	if b.handleSlackCommand(ctx, ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User, text) {
+		b.delivered.mark(ev.Channel, ev.TimeStamp)
 		return
 	}
+	b.delivered.mark(ev.Channel, ev.TimeStamp)
 	replyTS := ev.ThreadTimeStamp
 	if replyTS == "" && b.config.ThreadReplies {
 		replyTS = ev.TimeStamp
@@ -605,12 +666,26 @@ func (b *Bot) handleAppMentionEvent(ctx context.Context, ev *slackevents.AppMent
 		return
 	}
 	channel, threadTS, messageTS, userID := ev.Channel, ev.ThreadTimeStamp, ev.TimeStamp, ev.User
-	files := append([]slack.File(nil), ev.Files...)
+	files := mergeForwardedFiles(append([]slack.File(nil), ev.Files...), forwardedFiles(forwarded))
+	linkText := ev.Text
+	hasLinks := hasSlackMessageLinks(linkText)
 	process := func() {
+		if len(forwarded) > 0 || hasLinks {
+			fwdCtx, stopFwd := contextUntilTurnStop(ctx, active)
+			if hasLinks {
+				linked := b.resolveLinkedMessages(fwdCtx, linkText, forwarded, userID, channel)
+				forwarded = append(forwarded, linked...)
+				files = mergeForwardedFiles(files, forwardedFiles(linked))
+			}
+			b.resolveForwardedChannelNames(fwdCtx, forwarded)
+			stopFwd()
+			text = appendForwardedMessages(text, forwarded)
+		}
 		var attachments []agent.MessageAttachment
 		if len(files) > 0 {
 			b.logger.Debug("slack files attached to mention", "count", len(files))
 			downloadCtx, stopDownload := contextUntilTurnStop(ctx, active)
+			files = b.resolveFileDownloadURLs(downloadCtx, files)
 			downloaded, errs := b.downloadSlackFiles(downloadCtx, files)
 			stopDownload()
 			attachments = downloadedAttachments(downloaded)
@@ -620,7 +695,7 @@ func (b *Bot) handleAppMentionEvent(ctx context.Context, ev *slackevents.AppMent
 		b.processIncomingWithReservedAdmission(ctx, channel, threadTS, messageTS, text, userID,
 			attachments, len(files) == 0, active, admission)
 	}
-	if len(files) > 0 && admission != nil {
+	if (len(files) > 0 || len(forwarded) > 0 || hasLinks) && admission != nil {
 		go process()
 	} else {
 		process()

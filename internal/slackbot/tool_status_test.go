@@ -14,10 +14,40 @@ func TestToolStatusText(t *testing.T) {
 		want      string
 	}{
 		{
-			name:      "claude bash shows command",
+			name:      "claude bash prefers description",
 			toolName:  "Bash",
 			toolInput: `{"command":"git status","description":"Show working tree status"}`,
+			want:      "Running command: Show working tree status",
+		},
+		{
+			name:      "claude bash without description shows command",
+			toolName:  "Bash",
+			toolInput: `{"command":"git status"}`,
 			want:      "Running command: git status",
+		},
+		{
+			name:      "claude bash blank description falls back to command",
+			toolName:  "Bash",
+			toolInput: `{"command":"git status","description":"  \n "}`,
+			want:      "Running command: git status",
+		},
+		{
+			name:      "sub-agent shows description, never prompt",
+			toolName:  "Agent",
+			toolInput: `{"description":"Find callers","prompt":"very long brief"}`,
+			want:      "Running sub-agent: Find callers",
+		},
+		{
+			name:      "sub-agent without description",
+			toolName:  "Task",
+			toolInput: `{"prompt":"very long brief"}`,
+			want:      "Running sub-agent…",
+		},
+		{
+			name:      "read ignores description field",
+			toolName:  "Read",
+			toolInput: `{"file_path":"/foo/bar.go","description":"x"}`,
+			want:      "Reading file: /foo/bar.go",
 		},
 		{
 			name:      "codex shell raw command",
@@ -109,6 +139,42 @@ func TestToolStatusIndicator(t *testing.T) {
 			toolName:  "shell",
 			toolInput: "git status",
 			want:      "\n\n_⏳ Running command:_ `git status`",
+		},
+		{
+			name:      "bash description then command on next line",
+			toolName:  "Bash",
+			toolInput: `{"command":"git status","description":"巡回スクリプト結果確認"}`,
+			want:      "\n\n_⏳ Running command:_ 巡回スクリプト結果確認  \n`git status`",
+		},
+		{
+			name:      "bash description is single-lined and backtick-free",
+			toolName:  "Bash",
+			toolInput: `{"command":"echo hi","description":"check\n` + "`x`" + ` value"}`,
+			want:      "\n\n_⏳ Running command:_ check 'x' value  \n`echo hi`",
+		},
+		{
+			name:      "bash without description keeps command code span",
+			toolName:  "Bash",
+			toolInput: `{"command":"git status"}`,
+			want:      "\n\n_⏳ Running command:_ `git status`",
+		},
+		{
+			name:      "bash description without command",
+			toolName:  "Bash",
+			toolInput: `{"description":"Show status"}`,
+			want:      "\n\n_⏳ Running command:_ Show status",
+		},
+		{
+			name:      "sub-agent description only",
+			toolName:  "Task",
+			toolInput: `{"description":"Find callers","prompt":"brief"}`,
+			want:      "\n\n_⏳ Running sub-agent:_ Find callers",
+		},
+		{
+			name:      "codex shell has no description",
+			toolName:  "shell",
+			toolInput: `{"description":"not json for codex"}`,
+			want:      "\n\n_⏳ Running command:_ `{\"description\":\"not json for codex\"}`",
 		},
 		{
 			name:      "known tool without detail",

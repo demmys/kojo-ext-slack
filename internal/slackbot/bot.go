@@ -2140,7 +2140,7 @@ const toolDetailMaxLen = 120
 // Codex routes every file read/edit/search through its sandboxed shell,
 // so its tool name is always "shell" (see backend_codex.go). We map
 // "shell" to the same "Running command" label as Claude's "Bash" — the
-// shell command itself, surfaced via toolStatusDetail, tells the user
+// shell command itself, surfaced via toolStatusParts, tells the user
 // what is actually happening.
 func toolStatusLabel(toolName string) (label string, known bool) {
 	switch toolName {
@@ -2169,42 +2169,67 @@ func toolStatusLabel(toolName string) (label string, known bool) {
 	}
 }
 
-// toolStatusDetail extracts the single most salient argument from a tool
-// invocation's input — the shell command, the file path, the search
-// pattern — so the user can tell what the agent is actually doing rather
-// than just "Running command…". Returns "" when no useful detail is
-// available (the caller then falls back to the bare label).
+// toolStatusParts extracts what the Slack progress line shows for a tool
+// invocation:
+//
+//   - description: the human-readable summary the model itself wrote for
+//     the call (Claude's Bash / Agent / Task tools carry a "description"
+//     argument, e.g. "Show working tree status"). This is the same text the
+//     kojo WebUI shows on its tool cards. "" when the tool has none.
+//   - detail: the single most salient raw argument — the shell command, the
+//     file path, the search pattern — so the user can tell exactly what the
+//     agent is doing rather than just "Running command…". Slack-originated
+//     turns are not mirrored into the WebUI, so this is the only place the
+//     raw command is visible; it is kept even when a description exists.
+//
+// Both values are normalized by cleanToolDetail. Either may be "" (the
+// caller then falls back to the bare label).
 //
 // Claude tool inputs are JSON objects (e.g. {"command":"git status"}).
 // Codex's "shell" tool input is the raw command string, not JSON, so it
-// is used verbatim.
-func toolStatusDetail(toolName, toolInput string) string {
+// is used verbatim and never has a description.
+func toolStatusParts(toolName, toolInput string) (description, detail string) {
 	if toolInput == "" {
-		return ""
+		return "", ""
 	}
-	var detail string
+	if toolName == "shell" {
+		return "", cleanToolDetail(toolInput) // Codex: raw command string, not JSON.
+	}
+	var field string
 	switch toolName {
-	case "shell":
-		detail = toolInput // Codex: raw command string, not JSON.
 	case "Bash":
-		detail = jsonStringField(toolInput, "command")
+		field = "command"
+	case "Agent", "Task":
+		// Only the short description is surfaced; the input's prompt can be
+		// a large sub-agent brief and is never shown.
+		field = ""
 	case "Read", "Write", "Edit", "MultiEdit":
-		detail = jsonStringField(toolInput, "file_path")
+		field = "file_path"
 	case "NotebookEdit":
-		detail = jsonStringField(toolInput, "notebook_path")
+		field = "notebook_path"
 	case "Grep", "Glob":
-		detail = jsonStringField(toolInput, "pattern")
+		field = "pattern"
 	case "WebFetch":
-		detail = jsonStringField(toolInput, "url")
+		field = "url"
 	case "WebSearch":
-		detail = jsonStringField(toolInput, "query")
+		field = "query"
 	default:
-		// Tools whose detail we never surface (e.g. Agent/Task, whose input
-		// carries a potentially large sub-agent prompt) bail out here without
+		// Tools whose input we never surface bail out here without
 		// decoding the JSON at all.
-		return ""
+		return "", ""
 	}
-	return cleanToolDetail(detail)
+	var f toolDetailFields
+	if err := json.Unmarshal([]byte(toolInput), &f); err != nil {
+		return "", ""
+	}
+	switch toolName {
+	case "Bash", "Agent", "Task":
+		description = cleanToolDetail(f.Description)
+	}
+	if field != "" {
+		detail = cleanToolDetail(f.field(field))
+	}
+	return description, detail
 }
 
 // toolDetailFields enumerates the salient tool-input fields surfaced in the
@@ -2219,18 +2244,13 @@ type toolDetailFields struct {
 	Pattern      string `json:"pattern"`
 	URL          string `json:"url"`
 	Query        string `json:"query"`
+	Description  string `json:"description"`
 }
 
-// jsonStringField returns the string value of one top-level field of a JSON
-// object, or "" if the input is not a JSON object, the field is missing or not
-// a string, or the input is partial/invalid. Only the fields enumerated in
-// toolDetailFields are recognized; any other field name returns "".
-func jsonStringField(raw, field string) string {
-	var f toolDetailFields
-	if err := json.Unmarshal([]byte(raw), &f); err != nil {
-		return ""
-	}
-	switch field {
+// field returns the decoded value of one of the fields enumerated in
+// toolDetailFields by its JSON name, or "" for any other name.
+func (f toolDetailFields) field(name string) string {
+	switch name {
 	case "command":
 		return f.Command
 	case "file_path":
@@ -2285,7 +2305,13 @@ func toolStatusText(toolName, toolInput string) string {
 		}
 		label = "Using " + toolName
 	}
-	if detail := toolStatusDetail(toolName, toolInput); detail != "" {
+	description, detail := toolStatusParts(toolName, toolInput)
+	// The typing status is a single short plain-text line, so prefer the
+	// model-written description and fall back to the raw detail.
+	if description != "" {
+		return label + ": " + description
+	}
+	if detail != "" {
 		return label + ": " + detail
 	}
 	return label + "…"
@@ -2293,10 +2319,17 @@ func toolStatusText(toolName, toolInput string) string {
 
 // toolStatusIndicator builds the inline progress line shown in the Slack
 // stream (Slack mrkdwn). Only fixed label words ever sit inside the
-// italic span; every piece of dynamic text — the command/path/pattern
-// detail, or an unrecognized tool's name — goes in an inline code span so
-// its markdown-significant characters (_, *, ~, etc.) cannot break the
+// italic span; raw dynamic text — the command/path/pattern detail, or an
+// unrecognized tool's name — goes in an inline code span so its
+// markdown-significant characters (_, *, ~, etc.) cannot break the
 // surrounding formatting.
+//
+// The model-written description is the one exception: it is natural
+// language meant to be read as prose, so it follows the closed italic
+// label as plain text. It cannot reach into the label (the label's span is
+// already closed) and cleanToolDetail has collapsed it to one line without
+// backticks, so the worst an emphasis-like run inside it can do is format
+// part of that transient line.
 func toolStatusIndicator(toolName, toolInput string) string {
 	label, known := toolStatusLabel(toolName)
 	if !known {
@@ -2305,7 +2338,17 @@ func toolStatusIndicator(toolName, toolInput string) string {
 		}
 		return "\n\n_⏳ Using_ `" + cleanToolDetail(toolName) + "`"
 	}
-	if detail := toolStatusDetail(toolName, toolInput); detail != "" {
+	description, detail := toolStatusParts(toolName, toolInput)
+	switch {
+	case description != "" && detail != "":
+		// Description on the label line, raw command on the next line.
+		// "  \n" is a markdown hard line break, so the command starts a
+		// new line whether Slack treats a bare newline as a break or as a
+		// soft (space) break.
+		return "\n\n_⏳ " + label + ":_ " + description + "  \n`" + detail + "`"
+	case description != "":
+		return "\n\n_⏳ " + label + ":_ " + description
+	case detail != "":
 		return "\n\n_⏳ " + label + ":_ `" + detail + "`"
 	}
 	return "\n\n_⏳ " + label + "…_"

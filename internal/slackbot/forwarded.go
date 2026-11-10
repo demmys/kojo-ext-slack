@@ -84,6 +84,19 @@ func forwardedFiles(msgs []forwardedMessage) []slack.File {
 	return files
 }
 
+// untrustedForwardedFiles returns the files of payload-supplied forwards
+// with their URLs stripped. attachments[] can be authored by any API client,
+// so a URL there must never receive the bot token; the files are re-resolved
+// through files.info with an access check (resolveFileDownloadURLs).
+func untrustedForwardedFiles(msgs []forwardedMessage) []slack.File {
+	files := forwardedFiles(msgs)
+	for i := range files {
+		files[i].URLPrivateDownload = ""
+		files[i].URLPrivate = ""
+	}
+	return files
+}
+
 // forwardedChannelLookupTimeout bounds the conversations.info lookup used to
 // name the source channel of a forward.
 const forwardedChannelLookupTimeout = 5 * time.Second
@@ -221,7 +234,10 @@ const fileInfoTimeout = 15 * time.Second
 // only an ID (forwarded attachments may arrive as partial file objects) by
 // asking files.info with the bot token. Lookup failures leave the entry
 // untouched so downloadSlackFiles reports it as an error to the agent.
-func (b *Bot) resolveFileDownloadURLs(ctx context.Context, files []slack.File) []slack.File {
+//
+// Only files shared in a conversation the requester can read are resolved;
+// otherwise the entry stays URL-less and is reported as an error.
+func (b *Bot) resolveFileDownloadURLs(ctx context.Context, files []slack.File, requesterID, currentChannel string) []slack.File {
 	if b.api == nil {
 		return files
 	}
@@ -235,6 +251,10 @@ func (b *Bot) resolveFileDownloadURLs(ctx context.Context, files []slack.File) [
 		cancel()
 		if err != nil || info == nil {
 			b.logger.Warn("slack files.info failed", "fileID", f.ID, "err", err)
+			continue
+		}
+		if !b.requesterCanSeeFile(ctx, info, requesterID, currentChannel) {
+			b.logger.Warn("slack forwarded file withheld: requester has no access", "fileID", f.ID)
 			continue
 		}
 		if f.Name == "" {
@@ -269,4 +289,19 @@ func (t *flexTS) UnmarshalJSON(b []byte) error {
 	}
 	*t = ""
 	return nil
+}
+
+// requesterCanSeeFile reports whether the file is shared in at least one
+// conversation the requester can read.
+func (b *Bot) requesterCanSeeFile(ctx context.Context, info *slack.File, requesterID, currentChannel string) bool {
+	var chans []string
+	chans = append(chans, info.Channels...)
+	chans = append(chans, info.Groups...)
+	chans = append(chans, info.IMs...)
+	for _, ch := range chans {
+		if errCode, _ := b.checkLinkedAccess(ctx, ch, requesterID, currentChannel); errCode == "" {
+			return true
+		}
+	}
+	return false
 }
